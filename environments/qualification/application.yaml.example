@@ -1,0 +1,24 @@
+# Copy to application.yaml only after selecting a qualified candidate digest.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fieldsignal-qualification
+  namespace: argocd
+spec:
+  project: fieldsignal
+  sources:
+    - repoURL: oci://ghcr.io/rpjweez/fieldsignal-releases/fieldsignal
+      targetRevision: SELECT_QUALIFIED_CANDIDATE_DIGEST
+      path: .
+      helm:
+        releaseName: fieldsignal
+        valueFiles: [$config/environments/qualification/values.yaml]
+    - repoURL: https://github.com/RPJWeez/fieldsignal-deploy.git
+      targetRevision: main
+      ref: config
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fieldsignal-qualification
+  syncPolicy:
+    automated: {prune: true, selfHeal: true}
+    syncOptions: [FailOnSharedResource=true]

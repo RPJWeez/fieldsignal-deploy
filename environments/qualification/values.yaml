@@ -1,0 +1,22 @@
+# Local free-tier demonstration endpoints; credentials are provisioned separately.
+# Artifact pins and business behavior belong to the immutable candidate.
+application:
+  workloads:
+    ingestion-service:
+      replicas: 1
+      env:
+        DATABASE_URL: jdbc:postgresql://fieldsignal-test-postgres:5432/ingestion
+        DATABASE_USER: ingestion_user
+        KAFKA_BOOTSTRAP_SERVERS: fieldsignal-test-kafka:9092
+      envFromSecret: fieldsignal-database
+    incident-service:
+      replicas: 1
+      env:
+        DATABASE_URL: jdbc:postgresql://fieldsignal-test-postgres:5432/incident
+        DATABASE_USER: incident_user
+        KAFKA_BOOTSTRAP_SERVERS: fieldsignal-test-kafka:9092
+      envFromSecret: fieldsignal-database
+    station-console:
+      replicas: 1
+    operator-console:
+      replicas: 1

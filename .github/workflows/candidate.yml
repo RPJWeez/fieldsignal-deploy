@@ -1,0 +1,91 @@
+name: Publish and qualify an application candidate
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing candidates/<version> directory
+        required: true
+        type: string
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+  attestations: write
+concurrency:
+  group: candidate-${{ inputs.version }}
+  cancel-in-progress: false
+jobs:
+  candidate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22.22.0", cache: npm }
+      - run: npm ci
+      - run: npm test
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+        with: { version: v3.18.4 }
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
+        with: { cosign-release: v3.1.4 }
+      - name: Verify selected dependencies before packaging
+        id: selected
+        env:
+          { VERSION: "${{ inputs.version }}", GH_TOKEN: "${{ github.token }}" }
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]
+          chart="candidates/$VERSION"
+          helm dependency build "$chart"
+          for dependency in "$chart"/charts/*.tgz; do
+            gh attestation verify "$dependency" --repo RPJWeez/delivery-reference-platform --signer-workflow RPJWeez/delivery-reference-platform/.github/workflows/ci.yml --source-ref refs/heads/main
+            gh attestation verify "$dependency" --repo RPJWeez/delivery-reference-platform --source-ref refs/heads/main --predicate-type https://spdx.dev/Document
+          done
+          node --input-type=module - "$chart/values.yaml" > /tmp/images.txt <<'JS'
+          import fs from 'node:fs'; import {parse} from 'yaml';
+          const values=parse(fs.readFileSync(process.argv[2], 'utf8'));
+          for(const w of Object.values(values.application.workloads)) console.log(w.image);
+          JS
+          while read -r image; do
+            cosign verify "$image" --certificate-identity=https://github.com/RPJWeez/delivery-reference-platform/.github/workflows/ci.yml@refs/heads/main --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+            gh attestation verify "oci://$image" --repo RPJWeez/delivery-reference-platform --signer-workflow RPJWeez/delivery-reference-platform/.github/workflows/ci.yml --source-ref refs/heads/main
+            gh attestation verify "oci://$image" --repo RPJWeez/delivery-reference-platform --source-ref refs/heads/main --predicate-type https://spdx.dev/Document
+          done < /tmp/images.txt
+          echo "chart=$chart" >> "$GITHUB_OUTPUT"
+      - uses: RPJWeez/delivery-reference-platform/.github/actions/publish-chart@ede6984b386bb4a259ed9f6f38f83399319fa57d
+        id: published
+        with:
+          {
+            chart: "${{ steps.selected.outputs.chart }}",
+            registry: ghcr.io/rpjweez/fieldsignal-releases,
+            token: "${{ github.token }}",
+          }
+      - uses: RPJWeez/delivery-reference-platform/.github/actions/qualify@ede6984b386bb4a259ed9f6f38f83399319fa57d
+        id: qualified
+        with:
+          {
+            reference: "${{ steps.published.outputs.reference }}",
+            deployment-revision: "${{ github.sha }}",
+          }
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        id: evidence
+        with:
+          subject-name: ghcr.io/rpjweez/fieldsignal-releases/fieldsignal
+          subject-digest: ${{ steps.published.outputs.digest }}
+          predicate-type: https://github.com/RPJWeez/delivery-reference-platform/qualification/v1
+          predicate-path: ${{ steps.qualified.outputs.predicate }}
+          push-to-registry: true
+      - name: Retain qualified candidate evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          REFERENCE: ${{ steps.published.outputs.reference }}
+          ARCHIVE: ${{ steps.published.outputs.package }}
+          BUNDLE: ${{ steps.evidence.outputs.bundle-path }}
+        run: |
+          if ! gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release create "$VERSION" "$ARCHIVE" .work/qualification.json "$BUNDLE#qualification-bundle.json" --target "$GITHUB_SHA" --title "Qualified FieldSignal $VERSION" --notes "$REFERENCE"
+          fi
+          echo "Qualified candidate: $REFERENCE" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Promote by changing an environment Application targetRevision to this digest. No component rebuild is needed.' >> "$GITHUB_STEP_SUMMARY"
