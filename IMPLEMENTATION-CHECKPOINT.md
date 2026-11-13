@@ -26,3 +26,7 @@ branches until a reviewed protected-ref extension/drill. Second-app protected go
 failed rollout, concurrent promotion, rollback and hotfix drills remain acceptance gates.
 
 Pinned source machinery: `2a194dccf56ae601e4637456bb8360ed1d2c26d2`.
+
+Both review branches were pushed. Draft-PR creation via the GitHub connector failed
+with HTTP 403 (Resource not accessible by integration) in both repositories. No PR CI
+or protected-main publication was triggered. Source machinery pin remains `2a194dc`.
