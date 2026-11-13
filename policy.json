@@ -1,0 +1,16 @@
+{
+  "sourceRepository": "RPJWeez/delivery-reference-platform",
+  "sourceWorkflow": "RPJWeez/delivery-reference-platform/.github/workflows/ci.yml",
+  "sourceRef": "refs/heads/main",
+  "candidateRepository": "ghcr.io/rpjweez/delivery-reference-platform-candidates/fieldsignal",
+  "qaWorkflow": "RPJWeez/fieldsignal-deploy/.github/workflows/qa.yml",
+  "certificationWorkflow": "RPJWeez/fieldsignal-deploy/.github/workflows/certify.yml",
+  "qaPredicate": "https://delivery-reference-platform.dev/qa/v1",
+  "certificationPredicate": "https://delivery-reference-platform.dev/certification/v1",
+  "buildPredicate": "https://delivery-reference-platform.dev/candidate-build/v1",
+  "architectures": ["x86_64"],
+  "qaMaxAgeSeconds": 604800,
+  "certificationMaxAgeSeconds": 604800,
+  "revokedCandidates": [],
+  "securityThreshold": "high"
+}

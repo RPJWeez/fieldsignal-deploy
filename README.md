@@ -1,45 +1,47 @@
 # FieldSignal application delivery
 
-GitOps configuration for [FieldSignal](https://github.com/RPJWeez/delivery-reference-platform). Components publish independently; complete application candidates are qualified and promoted together.
+The source repository owns complete OCI Helm candidate creation. This repository owns
+configuration, separate disposable QA, signed eligibility decisions and reviewed promotion
+pairs. It never rebuilds application components or assembles manual image combinations.
 
-## Operating model
+## Prepared operating path
 
-1. Select published image digests in a standard Helm chart under candidates/<version>/.
-2. Run **Publish and qualify an application candidate** on main with that version.
-3. The workflow verifies artifact evidence, vendors the shared chart, publishes/signs the candidate, and deploys its OCI digest through one Argo CD Application in disposable kind.
-4. Browser business tests and API/Kafka replay tests must pass. A signed qualification and GitHub Release retain the exact candidate/test inputs.
-5. Promote by PR changing an environment Application targetRevision to the qualified digest. CI verifies signatures, provenance, SBOM and qualification, rejects image overrides, and renders the prospective environment.
-6. Observe Argo sync/health before merging the next promotion into the same environment. A Git merge alone does not prove deployment health, and GitOps may coalesce rapid updates.
-7. Restore a retained compatible candidate through another PR. No component rebuild is involved; external data/events are not automatically undone.
+1. Take the exact digest from source CI's `candidate-handoff`. `qa.yml` verifies the trusted
+   main workflow/source/run/attempt, candidate and all image evidence before checking out
+   tests. It deploys the same candidate through Argo in disposable kind, checks runtime
+   identity before/after application-owned browser/API/Kafka tests, signs scoped evidence,
+   and deletes the temporary cluster. No latest-run lookup or mutable tag is used.
+2. `certify.yml` verifies the successful issuing build/QA attempts, current policy, expiry,
+   revocation and fresh high/critical vulnerability scanning. It retains raw security reports
+   before signing eligibility on the original registry digest. CI and QA workflow signatures
+   cannot satisfy the certification issuer policy. No separate certified storage is used.
+3. Commit configuration first. Propose an existing reviewed configuration commit with the
+   certified candidate digest in the environment Application. CI rejects moving config and
+   all alternate Helm override routes, verifies current certification, and renders the exact
+   config commit against the selected candidate's packaged schema and image closure.
+4. GitOps deploys reviewed desired state. A selected runtime observer/merge interlock must
+   serialize production through observed health; Git merges are not health evidence.
 
-There is no custom release JSON, dependency graph or deployment renderer.
+## Activation and limits
 
-## Layout
+These workflows are prepared, not demonstrated cross-repository live capability. All
+Application examples remain inactive. `CERTIFICATION_ENABLED` must remain unset until
+the certification environment/ref protection and registry evidence access are configured.
+No duplicate human approval is required for automatic technical certification. The normal
+production decision remains review of the promotion pair. Production activation is blocked
+unless `PRODUCTION_OBSERVER_READY=true`; configure and prove the actual observer/merge
+interlock before setting that variable. A variable alone is not runtime enforcement.
 
-- candidates/: standard Helm wrapper charts with exact image pins and a vendored chart dependency.
-- environments/: legitimate environment differences and one complete-application Argo Application per environment.
-- bootstrap/: namespace-scoped AppProject and local setup instructions.
-- schemas/ and tests/: standard JSON Schema and configuration behavior tests.
+No shared cluster, live protection, package access permission, artifact visibility or
+registry contents were changed. No active Applications or qualified Releases existed in
+the inspected checkout/GitHub Releases list. Legacy artifacts are preserved; review any
+out-of-band retained deployment before changing its trust policy.
 
-Bootstrap Application files remain .example and inactive until a genuine candidate is qualified. No fabricated digest is active desired state.
+Run `npm ci && npm test`. See [implementation checkpoint](IMPLEMENTATION-CHECKPOINT.md)
+and the source [operator runbook](https://github.com/RPJWeez/delivery-reference-platform/blob/codex/application-golden-path/docs/operator-runbook.md)
+for executed checks, activation gates, recovery and remaining acceptance drills.
 
-## First release
-
-Use the published application chart version 0.2.0 initially. Each workload selects an actual image digest, port, replicas, probes, runtime settings and secret references. The source publication summaries provide digest references; never substitute latest tags or rebuild from a source branch.
-
-Candidate workflow actions are pinned by source commit. Qualification records the test-suite digest, deployment revision, runner architecture and workflow URL. Promote the same OCI digest without rebuilding. Changing a selection requires a new candidate version and qualification.
-
-```sh
-npm ci
-npm test
-```
-
-Keep both repositories and demo packages public. Configure main to require PRs and the GitHub Actions ci check after bootstrap. Zero approvals supports a solo maintainer; independent approval requires another reviewer.
-
-## Cost and retention
-
-Use standard public runners, public GHCR/Maven/npm packages, disposable kind and local Argo CD. No persistent cloud resources, paid runners, Nx Cloud or Apigee instance are created.
-
-Retain every qualified/deployed/rollback candidate, its components, signatures, SBOMs and evidence. Failure browser reports retain 14 days. Registry cleanup is report-only initially; never blindly purge untagged OCI manifests.
-
-Environment settings can vary endpoints, secret references, resources and replicas, but not images or business rules. These differences still require review; qualification does not establish identical environments or instantaneous rollout.
+Rollback selects a retained compatible candidate/configuration pair under current policy.
+It does not reverse database changes or external events. Main-only trust is deliberate;
+maintenance-branch hotfix publication needs an explicit protected-ref policy extension and
+an executed drill. Never substitute one hotfix image into an old candidate.

@@ -6,43 +6,61 @@ on:
 permissions: { contents: read, packages: read }
 concurrency:
   group: configuration-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   ci:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: { fetch-depth: 0 }
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with: { node-version: "22.22.0", cache: npm }
       - run: npm ci
       - run: npm test
       - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
         with: { version: v3.18.4 }
-      - uses: oras-project/setup-oras@22ce207df3b08e061f537244349aac6ae1d214f6
-        with: { version: 1.3.0 }
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
       - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac
         with: { cosign-release: v3.1.4 }
       - name: Verify promoted candidates and render prospective environments
-        env: { GH_TOKEN: "${{ github.token }}" }
+        env:
+          {
+            GH_TOKEN: "${{ github.token }}",
+            PRODUCTION_OBSERVER_READY: "${{ vars.PRODUCTION_OBSERVER_READY }}",
+          }
         shell: bash
         run: |
           set -euo pipefail
           for application in environments/*/application.yaml; do
             [[ -f "$application" ]] || continue
             environment=$(basename "$(dirname "$application")")
+            if [[ "$environment" = production && "${PRODUCTION_OBSERVER_READY:-}" != true ]]; then
+              echo 'Production promotion blocked: connect and verify health serialization before enabling active desired state.' >&2
+              exit 1
+            fi
             reference=$(node --input-type=module - "$application" <<'JS'
           import fs from 'node:fs'; import {parse} from 'yaml';
+          import {validateApplication} from './tools/application-policy.mjs';
+          validateApplication(parse(fs.readFileSync(process.argv[2], 'utf8')), process.argv[2].split('/')[1]);
           const s=parse(fs.readFileSync(process.argv[2], 'utf8')).spec.sources[0];
           console.log(s.repoURL.replace('oci://','')+'@'+s.targetRevision);
           JS
             )
-            cosign verify "$reference" --certificate-identity=https://github.com/RPJWeez/fieldsignal-deploy/.github/workflows/candidate.yml@refs/heads/main --certificate-oidc-issuer=https://token.actions.githubusercontent.com
-            gh attestation verify "oci://$reference" --repo RPJWeez/fieldsignal-deploy --signer-workflow RPJWeez/fieldsignal-deploy/.github/workflows/candidate.yml --source-ref refs/heads/main --predicate-type https://github.com/RPJWeez/delivery-reference-platform/qualification/v1 --format json > /tmp/qualification.json
-            jq -e --arg ref "$reference" 'any(.[]; .verificationResult.statement.predicate.result == "passed" and .verificationResult.statement.predicate.candidate == $ref)' /tmp/qualification.json
+            export REFERENCE="$reference"
+            bash tools/verify-candidate.sh
+            bash tools/verify-certification.sh
+            config_revision=$(node --input-type=module - "$application" <<'JS'
+          import fs from 'node:fs'; import {parse} from 'yaml';
+          console.log(parse(fs.readFileSync(process.argv[2], 'utf8')).spec.sources[1].targetRevision);
+          JS
+            )
+            git cat-file -e "$config_revision^{commit}"
+            git merge-base --is-ancestor "$config_revision" origin/main
             mkdir -p ".work/$environment"
-            oras pull "$reference" --output ".work/$environment"
-            archive=$(find ".work/$environment" -name '*.tgz' -print -quit)
-            [[ -n "$archive" ]]
-            gh attestation verify "$archive" --repo RPJWeez/fieldsignal-deploy --signer-workflow RPJWeez/fieldsignal-deploy/.github/workflows/candidate.yml --source-ref refs/heads/main
-            gh attestation verify "$archive" --repo RPJWeez/fieldsignal-deploy --source-ref refs/heads/main --predicate-type https://spdx.dev/Document
-            helm template fieldsignal "$archive" -f "environments/$environment/values.yaml" --namespace "fieldsignal-$environment" > ".work/$environment/rendered.yaml"
+            git show "$config_revision:environments/$environment/values.yaml" > ".work/$environment/values.yaml"
+            archive=.work/candidate/chart.tgz
+            node tools/validate-pair.mjs "$archive" ".work/$environment/values.yaml" "fieldsignal-$environment" > ".work/$environment/rendered.yaml"

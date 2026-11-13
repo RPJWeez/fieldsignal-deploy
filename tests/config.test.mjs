@@ -42,14 +42,14 @@ for (const environment of ["qualification", "staging", "production"]) {
     const [candidate, config] = app.spec.sources;
     assert.equal(
       candidate.repoURL,
-      "oci://ghcr.io/rpjweez/fieldsignal-releases/fieldsignal",
+      "oci://ghcr.io/rpjweez/delivery-reference-platform-candidates/fieldsignal",
     );
     assert.equal(candidate.path, ".");
     if (active) assert.match(candidate.targetRevision, /^sha256:[a-f0-9]{64}$/);
     else
       assert.equal(
         candidate.targetRevision,
-        "SELECT_QUALIFIED_CANDIDATE_DIGEST",
+        "SELECT_CERTIFIED_CANDIDATE_DIGEST",
       );
     assert.deepEqual(Object.keys(candidate.helm).sort(), [
       "releaseName",
@@ -61,7 +61,7 @@ for (const environment of ["qualification", "staging", "production"]) {
     ]);
     assert.deepEqual(config, {
       repoURL: "https://github.com/RPJWeez/fieldsignal-deploy.git",
-      targetRevision: "main",
+      targetRevision: "SELECT_REVIEWED_CONFIGURATION_COMMIT",
       ref: "config",
     });
     assert.equal(app.spec.destination.namespace, `fieldsignal-${environment}`);

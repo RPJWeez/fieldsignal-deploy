@@ -7,14 +7,14 @@ metadata:
 spec:
   project: fieldsignal
   sources:
-    - repoURL: oci://ghcr.io/rpjweez/fieldsignal-releases/fieldsignal
-      targetRevision: SELECT_QUALIFIED_CANDIDATE_DIGEST
+    - repoURL: oci://ghcr.io/rpjweez/delivery-reference-platform-candidates/fieldsignal
+      targetRevision: SELECT_CERTIFIED_CANDIDATE_DIGEST
       path: .
       helm:
         releaseName: fieldsignal
         valueFiles: [$config/environments/production/values.yaml]
     - repoURL: https://github.com/RPJWeez/fieldsignal-deploy.git
-      targetRevision: main
+      targetRevision: SELECT_REVIEWED_CONFIGURATION_COMMIT
       ref: config
   destination:
     server: https://kubernetes.default.svc

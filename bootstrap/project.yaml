@@ -6,7 +6,7 @@ metadata:
 spec:
   description: One complete FieldSignal application per environment
   sourceRepos:
-    - oci://ghcr.io/rpjweez/fieldsignal-releases/fieldsignal
+    - oci://ghcr.io/rpjweez/delivery-reference-platform-candidates/fieldsignal
     - https://github.com/RPJWeez/fieldsignal-deploy.git
   destinations:
     - {

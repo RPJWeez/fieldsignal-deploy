@@ -1,0 +1,67 @@
+name: Certify production eligibility
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Exact QA-tested source-CI candidate reference
+        type: string
+        required: true
+permissions: { contents: read }
+concurrency:
+  group: certify-${{ inputs.candidate }}
+  cancel-in-progress: false
+jobs:
+  certify:
+    # Remains fail-closed until maintainers configure the protected capability.
+    if: github.ref == 'refs/heads/main' && vars.CERTIFICATION_ENABLED == 'true'
+    environment: certification
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      { contents: write, packages: write, id-token: write, attestations: write }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22.22.0", cache: npm }
+      - run: npm ci
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+        with: { version: v3.18.4 }
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
+        with: { cosign-release: v3.1.4 }
+      - name: Install pinned Grype scanner
+        run: |
+          mkdir -p .work/bin
+          curl -fsSL https://github.com/anchore/grype/releases/download/v0.121.3/grype_0.121.3_linux_amd64.tar.gz -o .work/grype.tar.gz
+          echo 'e9da18cc1429e786722e32161288103600efffd8e483c90761f90485bd1bec85  .work/grype.tar.gz' | sha256sum -c -
+          tar -xzf .work/grype.tar.gz -C .work/bin grype
+          echo "$GITHUB_WORKSPACE/.work/bin" >> "$GITHUB_PATH"
+      - name: Verify build and trusted QA evidence against current policy
+        id: decision
+        env:
+          REFERENCE: ${{ inputs.candidate }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          bash tools/verify-candidate.sh
+          qa_workflow=$(jq -r .qaWorkflow policy.json)
+          gh attestation verify "oci://$REFERENCE" --repo "$GITHUB_REPOSITORY" --signer-workflow "$qa_workflow" --source-ref refs/heads/main --predicate-type "$(jq -r .qaPredicate policy.json)" --format json > .work/verified-qa.json
+          bash tools/security-check.sh
+          node tools/certify.mjs
+          echo "subject=${REFERENCE%@*}" >> "$GITHUB_OUTPUT"
+          echo "digest=${REFERENCE##*@}" >> "$GITHUB_OUTPUT"
+      - name: Retain decision and security reports
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: bash tools/retain-release.sh "certification-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" .work/certification.json .work/security.json
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ steps.decision.outputs.subject }}
+          subject-digest: ${{ steps.decision.outputs.digest }}
+          predicate-type: https://delivery-reference-platform.dev/certification/v1
+          predicate-path: .work/certification.json
+          push-to-registry: true
+      - run: echo 'Candidate certified under the recorded policy. Production still requires a reviewed immutable configuration pairing and observed health.' >> "$GITHUB_STEP_SUMMARY"

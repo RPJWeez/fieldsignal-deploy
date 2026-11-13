@@ -1,0 +1,82 @@
+name: QA exact application candidate
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: Exact source-CI candidate reference (repository@sha256:digest)
+        required: true
+        type: string
+permissions: { contents: read }
+concurrency:
+  group: disposable-qa-${{ github.run_id }}
+  cancel-in-progress: false
+jobs:
+  qa:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      { contents: read, packages: write, id-token: write, attestations: write }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: { node-version: "22.22.0", cache: npm }
+      - run: npm ci
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4
+        with: { version: v3.18.4 }
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad
+        with: { cosign-release: v3.1.4 }
+      - name: Verify complete candidate before deploying or checking out test source
+        id: verified
+        env:
+          REFERENCE: ${{ inputs.candidate }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          bash tools/verify-candidate.sh
+          echo "source=$(cat .work/candidate/source-sha)" >> "$GITHUB_OUTPUT"
+          echo "repository=$(jq -r .sourceRepository policy.json)" >> "$GITHUB_OUTPUT"
+          echo "subject=${REFERENCE%@*}" >> "$GITHUB_OUTPUT"
+          echo "digest=${REFERENCE##*@}" >> "$GITHUB_OUTPUT"
+          archive=.work/candidate/chart.tgz
+          node tools/validate-pair.mjs "$archive" environments/qualification/values.yaml fieldsignal-qualification > .work/qa-rendered.yaml
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: ${{ steps.verified.outputs.repository }}
+          ref: ${{ steps.verified.outputs.source }}
+          path: source
+      - uses: RPJWeez/delivery-reference-platform/.github/actions/qualify@2a194dccf56ae601e4637456bb8360ed1d2c26d2
+        id: tested
+        with:
+          reference: ${{ inputs.candidate }}
+          deployment-revision: ${{ github.sha }}
+          namespace: fieldsignal-qualification
+          application: fieldsignal-qualification
+          release-name: fieldsignal
+          dependencies: tools/qualify-dependencies.sh
+          test-command: bash tools/qualify-tests.sh
+          fixture-path: infra/qualification/dependencies.yaml
+          test-root: ${{ github.workspace }}/source
+          test-revision: ${{ steps.verified.outputs.source }}
+          expected-images: ${{ github.workspace }}/.work/candidate/images.txt
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6
+        with:
+          subject-name: ${{ steps.verified.outputs.subject }}
+          subject-digest: ${{ steps.verified.outputs.digest }}
+          predicate-type: https://delivery-reference-platform.dev/qa/v1
+          predicate-path: ${{ steps.tested.outputs.predicate }}
+          push-to-registry: true
+      - name: Record QA-tested state
+        run: echo 'Exact candidate passed disposable QA. Certification and promotion remain separate.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: qa-evidence-${{ github.run_attempt }}
+          path: .work
+          include-hidden-files: true
+          retention-days: 14
